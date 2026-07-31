@@ -2,69 +2,32 @@ import os
 import random
 import string
 import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
-from aiogram import F
-import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import sys
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Get token from environment variable
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    logging.error("❌ TELEGRAM_BOT_TOKEN environment variable not set!")
+    logger.error("❌ TELEGRAM_BOT_TOKEN environment variable not set!")
     sys.exit(1)
 
-# Initialize bot and dispatcher
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-
 # Password generation function
-def generate_password(length=16, use_uppercase=True, use_lowercase=True, 
-                      use_digits=True, use_symbols=True, exclude_ambiguous=False):
-    lowercase = string.ascii_lowercase
-    uppercase = string.ascii_uppercase
-    digits = string.digits
-    symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?"
-    ambiguous = "il1Lo0O"
-    
-    pool = ""
-    if use_lowercase:
-        pool += lowercase
-    if use_uppercase:
-        pool += uppercase
-    if use_digits:
-        pool += digits
-    if use_symbols:
-        pool += symbols
-    
-    if exclude_ambiguous and pool:
-        for char in ambiguous:
-            pool = pool.replace(char, "")
-    
-    if not pool:
-        pool = lowercase + digits
-    
-    password = ''.join(random.choice(pool) for _ in range(length))
-    
-    if use_uppercase and not any(c.isupper() for c in password):
-        pos = random.randint(0, length-1)
-        password = password[:pos] + random.choice(uppercase) + password[pos+1:]
-    
-    if use_digits and not any(c.isdigit() for c in password):
-        pos = random.randint(0, length-1)
-        password = password[:pos] + random.choice(digits) + password[pos+1:]
-    
-    if use_symbols and not any(c in symbols for c in password):
-        pos = random.randint(0, length-1)
-        password = password[:pos] + random.choice(symbols) + password[pos+1:]
-    
+def generate_password(length=16):
+    """Generate a strong password"""
+    characters = string.ascii_letters + string.digits + "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    password = ''.join(random.choice(characters) for _ in range(length))
     return password
 
 def get_strength(password):
+    """Evaluate password strength"""
     score = 0
     if len(password) >= 12:
         score += 1
@@ -85,180 +48,151 @@ def get_strength(password):
         return "🟢 Strong"
     elif score >= 4:
         return "🟡 Moderate"
-    elif score >= 3:
-        return "🟠 Weak"
     else:
-        return "🔴 Very Weak"
+        return "🟠 Weak"
 
-@dp.message(Command("start"))
-async def start_command(message: types.Message):
+# Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "🔐 *Welcome to Secure Password Generator!*\n\n"
-        "I can generate strong, secure passwords for you instantly.\n\n"
+        "I can generate strong passwords for you instantly.\n\n"
         "📌 *Commands:*\n"
-        "/generate - Generate a password with default settings\n"
-        "/custom - Generate a password with custom options\n"
-        "/help - Show this help message\n"
-        "/about - About this bot\n\n"
-        "🔒 All passwords are generated locally and never stored."
+        "/generate - Generate a 16-character password\n"
+        "/generate 24 - Generate a 24-character password\n"
+        "/custom - Choose from preset lengths\n"
+        "/help - Show help\n\n"
+        "🔒 Passwords are generated locally and never stored."
     )
-    await message.answer(welcome_text, parse_mode="Markdown")
+    await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
-@dp.message(Command("help"))
-async def help_command(message: types.Message):
+# Help command
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "❓ *How to use this bot:*\n\n"
-        "1️⃣ Click /generate for a quick password (16 chars)\n"
-        "2️⃣ Click /custom to customize your password\n"
-        "3️⃣ Or just type /generate 24 to get a 24-character password\n\n"
+        "❓ *How to use:*\n\n"
+        "1️⃣ /generate - Quick password (16 chars)\n"
+        "2️⃣ /generate 24 - Custom length (4-128)\n"
+        "3️⃣ /custom - Choose from presets\n\n"
         "*Features:*\n"
-        "✅ Strong passwords with mixed characters\n"
-        "✅ Copy to clipboard with one click\n"
-        "✅ Password strength indicator\n"
-        "✅ Customizable length and character types"
+        "✅ Strong passwords\n"
+        "✅ Strength indicator\n"
+        "✅ Customizable length"
     )
-    await message.answer(help_text, parse_mode="Markdown")
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
-@dp.message(Command("about"))
-async def about_command(message: types.Message):
-    about_text = (
-        "ℹ️ *About This Bot*\n\n"
-        "🔐 Password Generator Bot v1.0\n\n"
-        "👨‍💻 Built with aiogram\n"
-        "📦 Deployed on Railway\n"
-        "🔄 Open Source\n\n"
-        "🔒 Your passwords are generated locally and NEVER stored.\n"
-        "No data is collected or logged."
-    )
-    await message.answer(about_text, parse_mode="Markdown")
+# Generate command
+async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        # Check if user specified length
+        args = context.args
+        length = 16  # default
+        
+        if args:
+            try:
+                length = int(args[0])
+                if length < 4:
+                    length = 4
+                elif length > 128:
+                    length = 128
+            except ValueError:
+                await update.message.reply_text("⚠️ Please send a valid number (4-128). Using default 16.")
+        
+        # Generate password
+        password = generate_password(length)
+        strength = get_strength(password)
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Copy", callback_data=f"copy_{password}")],
+            [InlineKeyboardButton("🔄 New Password", callback_data="new")],
+            [InlineKeyboardButton("⚙️ Custom Length", callback_data="custom")]
+        ])
+        
+        response = (
+            f"🔑 *Your Password*\n\n"
+            f"`{password}`\n\n"
+            f"📊 Strength: {strength}\n"
+            f"📏 Length: {len(password)}\n\n"
+            f"Click 'Copy' to copy the password!"
+        )
+        
+        await update.message.reply_text(response, parse_mode='Markdown', reply_markup=keyboard)
+    
+    except Exception as e:
+        logger.error(f"Error in generate: {e}")
+        await update.message.reply_text("❌ Something went wrong. Please try again.")
 
-@dp.message(Command("generate"))
-async def generate_command(message: types.Message):
-    args = message.text.split()
-    length = 16
+# Custom command
+async def custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔢 8 chars", callback_data="preset_8"),
+         InlineKeyboardButton("🔢 12 chars", callback_data="preset_12")],
+        [InlineKeyboardButton("🔢 16 chars", callback_data="preset_16"),
+         InlineKeyboardButton("🔢 24 chars", callback_data="preset_24")],
+        [InlineKeyboardButton("🔢 32 chars", callback_data="preset_32"),
+         InlineKeyboardButton("🔢 64 chars", callback_data="preset_64")],
+        [InlineKeyboardButton("🎲 Random", callback_data="preset_random")]
+    ])
     
-    if len(args) > 1:
-        try:
-            length = int(args[1])
-            if length < 4:
-                length = 4
-            elif length > 128:
-                length = 128
-        except ValueError:
-            await message.answer("⚠️ Please provide a valid number (4-128). Using default 16.")
-    
-    password = generate_password(length=length)
-    strength = get_strength(password)
-    
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Copy Password", callback_data=f"copy_{password}")],
-            [InlineKeyboardButton(text="🔄 Generate Another", callback_data="generate_another")],
-            [InlineKeyboardButton(text="⚙️ Custom Options", callback_data="custom_options")]
-        ]
-    )
-    
-    response = (
-        f"🔑 *Your Generated Password*\n\n"
-        f"`{password}`\n\n"
-        f"📊 Strength: {strength}\n"
-        f"📏 Length: {len(password)} characters\n\n"
-        f"💡 Click the button below to copy!"
-    )
-    
-    await message.answer(response, parse_mode="Markdown", reply_markup=keyboard)
-
-@dp.message(Command("custom"))
-async def custom_command(message: types.Message):
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔢 12 chars", callback_data="preset_12"),
-                InlineKeyboardButton(text="🔢 16 chars", callback_data="preset_16"),
-                InlineKeyboardButton(text="🔢 24 chars", callback_data="preset_24")
-            ],
-            [
-                InlineKeyboardButton(text="🔢 32 chars", callback_data="preset_32"),
-                InlineKeyboardButton(text="🔢 64 chars", callback_data="preset_64"),
-                InlineKeyboardButton(text="🔢 128 chars", callback_data="preset_128")
-            ],
-            [
-                InlineKeyboardButton(text="🎲 Random Length", callback_data="preset_random")
-            ],
-            [
-                InlineKeyboardButton(text="🔙 Back to Main", callback_data="back_to_main")
-            ]
-        ]
-    )
-    
-    await message.answer(
-        "⚙️ *Choose Password Length:*\n\n"
-        "Select a preset length or use the main /generate command with a custom number.",
-        parse_mode="Markdown",
+    await update.message.reply_text(
+        "⚙️ *Choose password length:*",
+        parse_mode='Markdown',
         reply_markup=keyboard
     )
 
-@dp.callback_query()
-async def handle_callback(callback: types.CallbackQuery):
-    data = callback.data
+# Handle button clicks
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
+    data = query.data
+    
+    # Copy password
     if data.startswith("copy_"):
         password = data.replace("copy_", "")
-        await callback.answer(f"📋 Password copied!", show_alert=False)
+        await query.message.reply_text(f"✅ Password copied!\n\n`{password}`", parse_mode='Markdown')
+        return
     
-    elif data == "generate_another":
-        password = generate_password()
+    # Generate new password
+    if data == "new":
+        password = generate_password(16)
         strength = get_strength(password)
         
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Copy Password", callback_data=f"copy_{password}")],
-                [InlineKeyboardButton(text="🔄 Generate Another", callback_data="generate_another")],
-                [InlineKeyboardButton(text="⚙️ Custom Options", callback_data="custom_options")]
-            ]
-        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Copy", callback_data=f"copy_{password}")],
+            [InlineKeyboardButton("🔄 New Password", callback_data="new")],
+            [InlineKeyboardButton("⚙️ Custom Length", callback_data="custom")]
+        ])
         
         response = (
-            f"🔑 *Your New Password*\n\n"
+            f"🔑 *Your Password*\n\n"
             f"`{password}`\n\n"
             f"📊 Strength: {strength}\n"
-            f"📏 Length: {len(password)} characters"
+            f"📏 Length: {len(password)}"
         )
         
-        await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=keyboard)
-        await callback.answer()
+        await query.edit_message_text(response, parse_mode='Markdown', reply_markup=keyboard)
+        return
     
-    elif data == "custom_options":
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🔢 12 chars", callback_data="preset_12"),
-                    InlineKeyboardButton(text="🔢 16 chars", callback_data="preset_16"),
-                    InlineKeyboardButton(text="🔢 24 chars", callback_data="preset_24")
-                ],
-                [
-                    InlineKeyboardButton(text="🔢 32 chars", callback_data="preset_32"),
-                    InlineKeyboardButton(text="🔢 64 chars", callback_data="preset_64"),
-                    InlineKeyboardButton(text="🔢 128 chars", callback_data="preset_128")
-                ],
-                [
-                    InlineKeyboardButton(text="🎲 Random Length", callback_data="preset_random")
-                ],
-                [
-                    InlineKeyboardButton(text="🔙 Back to Main", callback_data="back_to_main")
-                ]
-            ]
-        )
+    # Custom options
+    if data == "custom":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔢 8 chars", callback_data="preset_8"),
+             InlineKeyboardButton("🔢 12 chars", callback_data="preset_12")],
+            [InlineKeyboardButton("🔢 16 chars", callback_data="preset_16"),
+             InlineKeyboardButton("🔢 24 chars", callback_data="preset_24")],
+            [InlineKeyboardButton("🔢 32 chars", callback_data="preset_32"),
+             InlineKeyboardButton("🔢 64 chars", callback_data="preset_64")],
+            [InlineKeyboardButton("🎲 Random", callback_data="preset_random")]
+        ])
         
-        await callback.message.edit_text(
-            "⚙️ *Choose Password Length:*\n\n"
-            "Select a preset length for your password.",
-            parse_mode="Markdown",
+        await query.edit_message_text(
+            "⚙️ *Choose password length:*",
+            parse_mode='Markdown',
             reply_markup=keyboard
         )
-        await callback.answer()
+        return
     
-    elif data.startswith("preset_"):
+    # Preset lengths
+    if data.startswith("preset_"):
         preset = data.replace("preset_", "")
         
         if preset == "random":
@@ -266,74 +200,78 @@ async def handle_callback(callback: types.CallbackQuery):
         else:
             length = int(preset)
         
-        password = generate_password(length=length)
+        password = generate_password(length)
         strength = get_strength(password)
         
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Copy Password", callback_data=f"copy_{password}")],
-                [InlineKeyboardButton(text="🔄 Generate Another", callback_data="generate_another")],
-                [InlineKeyboardButton(text="⚙️ Custom Options", callback_data="custom_options")]
-            ]
-        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Copy", callback_data=f"copy_{password}")],
+            [InlineKeyboardButton("🔄 New Password", callback_data="new")],
+            [InlineKeyboardButton("⚙️ Custom Length", callback_data="custom")]
+        ])
         
         response = (
-            f"🔑 *Your Generated Password*\n\n"
+            f"🔑 *Your Password*\n\n"
             f"`{password}`\n\n"
             f"📊 Strength: {strength}\n"
-            f"📏 Length: {len(password)} characters"
+            f"📏 Length: {len(password)}"
         )
         
-        await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=keyboard)
-        await callback.answer()
-    
-    elif data == "back_to_main":
-        await start_command(callback.message)
-        await callback.answer()
+        await query.edit_message_text(response, parse_mode='Markdown', reply_markup=keyboard)
 
-@dp.message(F.text)
-async def handle_text(message: types.Message):
-    text = message.text.strip()
-    
+# Handle text messages (for custom length)
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        length = int(text)
+        length = int(update.message.text.strip())
         if 4 <= length <= 128:
-            password = generate_password(length=length)
+            password = generate_password(length)
             strength = get_strength(password)
             
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="📋 Copy Password", callback_data=f"copy_{password}")],
-                    [InlineKeyboardButton(text="🔄 Generate Another", callback_data="generate_another")]
-                ]
-            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Copy", callback_data=f"copy_{password}")],
+                [InlineKeyboardButton("🔄 New Password", callback_data="new")],
+                [InlineKeyboardButton("⚙️ Custom Length", callback_data="custom")]
+            ])
             
             response = (
-                f"🔑 *Your Generated Password*\n\n"
+                f"🔑 *Your Password*\n\n"
                 f"`{password}`\n\n"
                 f"📊 Strength: {strength}\n"
-                f"📏 Length: {len(password)} characters"
+                f"📏 Length: {len(password)}"
             )
             
-            await message.answer(response, parse_mode="Markdown", reply_markup=keyboard)
-            return
+            await update.message.reply_text(response, parse_mode='Markdown', reply_markup=keyboard)
+        else:
+            await update.message.reply_text("⚠️ Please send a number between 4 and 128.")
     except ValueError:
-        pass
-    
-    await message.answer(
-        "🤔 Send me a number (4-128) to generate a password of that length,\n"
-        "or use /generate for a quick password!",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔑 Generate Password", callback_data="generate_another")],
-                [InlineKeyboardButton(text="⚙️ Custom Options", callback_data="custom_options")]
-            ]
+        await update.message.reply_text(
+            "🤔 Send a number (4-128) for a custom length, or use /generate"
         )
-    )
 
-async def main():
-    logging.info("🚀 Bot is starting...")
-    await dp.start_polling(bot)
+# Error handler
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} caused error {context.error}")
+    if update and update.message:
+        await update.message.reply_text("❌ An error occurred. Please try again.")
+
+# Main function
+def main():
+    logger.info("🚀 Bot is starting...")
+    
+    # Create application
+    application = Application.builder().token(TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("generate", generate))
+    application.add_handler(CommandHandler("custom", custom))
+    application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    application.add_error_handler(error_handler)
+    
+    # Start bot
+    logger.info("✅ Bot is ready!")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
