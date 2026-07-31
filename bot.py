@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram import F
 import asyncio
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -14,7 +15,8 @@ logging.basicConfig(level=logging.INFO)
 # Get token from environment variable
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
+    logging.error("❌ TELEGRAM_BOT_TOKEN environment variable not set!")
+    sys.exit(1)
 
 # Initialize bot and dispatcher
 bot = Bot(token=TOKEN)
@@ -23,19 +25,12 @@ dp = Dispatcher()
 # Password generation function
 def generate_password(length=16, use_uppercase=True, use_lowercase=True, 
                       use_digits=True, use_symbols=True, exclude_ambiguous=False):
-    """
-    Generate a secure password based on user preferences.
-    """
-    # Character sets
     lowercase = string.ascii_lowercase
     uppercase = string.ascii_uppercase
     digits = string.digits
     symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?"
-    
-    # Ambiguous characters to exclude if requested
     ambiguous = "il1Lo0O"
     
-    # Build character pool
     pool = ""
     if use_lowercase:
         pool += lowercase
@@ -46,19 +41,15 @@ def generate_password(length=16, use_uppercase=True, use_lowercase=True,
     if use_symbols:
         pool += symbols
     
-    # Remove ambiguous characters
     if exclude_ambiguous and pool:
         for char in ambiguous:
             pool = pool.replace(char, "")
     
-    # Ensure at least one character from each selected type
     if not pool:
-        pool = lowercase + digits  # Fallback
+        pool = lowercase + digits
     
-    # Generate password
     password = ''.join(random.choice(pool) for _ in range(length))
     
-    # Ensure minimum requirements for strength
     if use_uppercase and not any(c.isupper() for c in password):
         pos = random.randint(0, length-1)
         password = password[:pos] + random.choice(uppercase) + password[pos+1:]
@@ -73,9 +64,7 @@ def generate_password(length=16, use_uppercase=True, use_lowercase=True,
     
     return password
 
-# Generate password strength indicator
 def get_strength(password):
-    """Evaluate password strength."""
     score = 0
     if len(password) >= 12:
         score += 1
@@ -101,7 +90,6 @@ def get_strength(password):
     else:
         return "🔴 Very Weak"
 
-# Start command handler
 @dp.message(Command("start"))
 async def start_command(message: types.Message):
     welcome_text = (
@@ -116,7 +104,6 @@ async def start_command(message: types.Message):
     )
     await message.answer(welcome_text, parse_mode="Markdown")
 
-# Help command handler
 @dp.message(Command("help"))
 async def help_command(message: types.Message):
     help_text = (
@@ -132,7 +119,6 @@ async def help_command(message: types.Message):
     )
     await message.answer(help_text, parse_mode="Markdown")
 
-# About command handler
 @dp.message(Command("about"))
 async def about_command(message: types.Message):
     about_text = (
@@ -146,12 +132,10 @@ async def about_command(message: types.Message):
     )
     await message.answer(about_text, parse_mode="Markdown")
 
-# Generate command handler
 @dp.message(Command("generate"))
 async def generate_command(message: types.Message):
-    # Check if user specified a length
     args = message.text.split()
-    length = 16  # Default length
+    length = 16
     
     if len(args) > 1:
         try:
@@ -163,11 +147,9 @@ async def generate_command(message: types.Message):
         except ValueError:
             await message.answer("⚠️ Please provide a valid number (4-128). Using default 16.")
     
-    # Generate password
     password = generate_password(length=length)
     strength = get_strength(password)
     
-    # Create inline keyboard with copy button
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Copy Password", callback_data=f"copy_{password}")],
@@ -186,7 +168,6 @@ async def generate_command(message: types.Message):
     
     await message.answer(response, parse_mode="Markdown", reply_markup=keyboard)
 
-# Custom command handler
 @dp.message(Command("custom"))
 async def custom_command(message: types.Message):
     keyboard = InlineKeyboardMarkup(
@@ -217,18 +198,14 @@ async def custom_command(message: types.Message):
         reply_markup=keyboard
     )
 
-# Handle callback queries
 @dp.callback_query()
 async def handle_callback(callback: types.CallbackQuery):
     data = callback.data
     
-    # Handle copy action
     if data.startswith("copy_"):
         password = data.replace("copy_", "")
-        await callback.answer(f"📋 Password copied to clipboard!", show_alert=False)
-        # Note: Telegram doesn't allow auto-copy, but we show it prominently
+        await callback.answer(f"📋 Password copied!", show_alert=False)
     
-    # Handle generate another
     elif data == "generate_another":
         password = generate_password()
         strength = get_strength(password)
@@ -251,7 +228,6 @@ async def handle_callback(callback: types.CallbackQuery):
         await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=keyboard)
         await callback.answer()
     
-    # Handle custom options
     elif data == "custom_options":
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -282,7 +258,6 @@ async def handle_callback(callback: types.CallbackQuery):
         )
         await callback.answer()
     
-    # Handle preset lengths
     elif data.startswith("preset_"):
         preset = data.replace("preset_", "")
         
@@ -312,17 +287,14 @@ async def handle_callback(callback: types.CallbackQuery):
         await callback.message.edit_text(response, parse_mode="Markdown", reply_markup=keyboard)
         await callback.answer()
     
-    # Handle back to main
     elif data == "back_to_main":
         await start_command(callback.message)
         await callback.answer()
 
-# Default message handler - generate password from any text
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     text = message.text.strip()
     
-    # Check if user sent a number
     try:
         length = int(text)
         if 4 <= length <= 128:
@@ -348,7 +320,6 @@ async def handle_text(message: types.Message):
     except ValueError:
         pass
     
-    # If not a number, give help
     await message.answer(
         "🤔 Send me a number (4-128) to generate a password of that length,\n"
         "or use /generate for a quick password!",
@@ -360,10 +331,8 @@ async def handle_text(message: types.Message):
         )
     )
 
-# Main function
 async def main():
-    print("🚀 Bot is starting...")
-    print("🤖 Password Generator Bot is running!")
+    logging.info("🚀 Bot is starting...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
